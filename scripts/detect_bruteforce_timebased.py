@@ -4,6 +4,8 @@
 
 import datetime
 
+import json
+
 from collections import defaultdict
 
 
@@ -74,7 +76,7 @@ def main():
 
         for line in log:
 
-            if "Failed password" not in line:
+            if "Failed password" not  in line:
 
                 continue
 
@@ -112,26 +114,45 @@ def main():
 
 
 
-    print("====================================")
-
-    print(" SSH Brute-force Detection (Python)")
-
-    print(f" Time Window: Last {WINDOW_MINUTES} minutes")
-
-    print(f" Scan Time: {now}")
-
-    print("====================================")
-
-
+    alerts = []
 
     for ip, count in failed_attempts.items():
 
         if count >= THRESHOLD:
 
-            print(f"[ALERT] {ip} has {count} failed SSH login attempts")
+            alerts.append({
+
+                "ip": ip,
+
+                "failed_attempts": count
+
+            })
+
+
+
+    output = {
+
+        "detection": "ssh_bruteforce",
+
+        "severity": "high" if alerts else "info",
+
+        "window_minutes": WINDOW_MINUTES,
+
+        "generated_at": now.isoformat(),
+
+        "alert_count": len(alerts),
+
+        "alerts": alerts
+
+    }
+
+
+
+    print(json.dumps(output, indent=2))
 
 
 
 if __name__ == "__main__":
 
     main()
+
