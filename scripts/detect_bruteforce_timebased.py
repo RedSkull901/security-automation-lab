@@ -6,6 +6,10 @@ import datetime
 
 import json
 
+import os
+
+import requests
+
 from collections import defaultdict
 
 
@@ -14,9 +18,15 @@ LOG_FILE = "/var/log/auth.log"
 
 ALLOWLIST_FILE = "config/allowlist_ips.txt"
 
+API_KEY_FILE = "config/api_keys.env"
+
 THRESHOLD = 5
 
 WINDOW_MINUTES = 10
+
+
+
+ABUSEIPDB_URL = "https://api.abuseipdb.com/api/v2/check"
 
 
 
@@ -40,6 +50,26 @@ def load_allowlist(path):
 
 
 
+def load_api_key(path):
+
+    try:
+
+        with open(path, "r") as f:
+
+            for line in f:
+
+                if line.startswith("ABUSEIPDB_API_KEY"):
+
+                    return line.strip().split("=")[1]
+
+    except FileNotFoundError:
+
+        pass
+
+    return None
+
+
+
 def parse_log_time(line):
 
     parts = line.split()
@@ -58,6 +88,54 @@ def parse_log_time(line):
 
 
 
+def enrich_ip(ip, api_key):
+
+    headers = {
+
+        "Key": api_key,
+
+        "Accept": "application/json"
+
+    }
+
+    params = {
+
+        "ipAddress": ip,
+
+        "maxAgeInDays": 90
+
+    }
+
+    try:
+
+        response = requests.get(ABUSEIPDB_URL, headers=headers, params=params, timeout=10)
+
+        data = response.json().get("data", {})
+
+        return {
+
+            "abuse_confidence_score": data.get("abuseConfidenceScore"),
+
+            "country": data.get("countryCode"),
+
+            "is_whitelisted": data.get("isWhitelisted")
+
+        }
+
+    except Exception:
+
+        return {
+
+            "abuse_confidence_score": None,
+
+            "country": None,
+
+            "is_whitelisted": None
+
+        }
+
+
+
 def main():
 
     now = datetime.datetime.now()
@@ -70,13 +148,15 @@ def main():
 
     allowlist = load_allowlist(ALLOWLIST_FILE)
 
+    api_key = load_api_key(API_KEY_FILE)
+
 
 
     with open(LOG_FILE, "r") as log:
 
         for line in log:
 
-            if "Failed password" not  in line:
+            if "Failed password" not in line:
 
                 continue
 
@@ -120,11 +200,15 @@ def main():
 
         if count >= THRESHOLD:
 
+            enrichment = enrich_ip(ip, api_key) if api_key else {}
+
             alerts.append({
 
                 "ip": ip,
 
-                "failed_attempts": count
+                "failed_attempts": count,
+
+                "threat_intel": enrichment
 
             })
 
@@ -155,4 +239,3 @@ def main():
 if __name__ == "__main__":
 
     main()
-

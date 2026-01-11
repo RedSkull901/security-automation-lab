@@ -1,0 +1,122 @@
+        pass
+
+    return allowlist
+
+
+
+def parse_log_time(line):
+
+    parts = line.split()
+
+    timestamp_str = " ".join(parts[0:3])
+
+    current_year = datetime.datetime.now().year
+
+    return datetime.datetime.strptime(
+
+        f"{timestamp_str} {current_year}",
+
+        "%b %d %H:%M:%S %Y"
+
+    )
+
+
+
+def main():
+
+    now = datetime.datetime.now()
+
+    window_start = now - datetime.timedelta(minutes=WINDOW_MINUTES)
+
+    failed_attempts = defaultdict(int)
+
+
+
+    allowlist = load_allowlist(ALLOWLIST_FILE)
+
+
+
+    with open(LOG_FILE, "r") as log:
+
+        for line in log:
+
+            if "Failed password" not  in line:
+
+                continue
+
+
+
+            try:
+
+                log_time = parse_log_time(line)
+
+            except ValueError:
+
+                continue
+
+
+
+            if log_time < window_start:
+
+                continue
+
+
+
+            parts = line.split()
+
+            ip = parts[-4]
+
+
+
+            if ip in allowlist:
+
+                continue
+
+
+
+            failed_attempts[ip] += 1
+
+
+
+    alerts = []
+
+    for ip, count in failed_attempts.items():
+
+        if count >= THRESHOLD:
+
+            alerts.append({
+
+                "ip": ip,
+
+                "failed_attempts": count
+
+            })
+
+
+
+    output = {
+
+        "detection": "ssh_bruteforce",
+
+        "severity": "high" if alerts else "info",
+
+        "window_minutes": WINDOW_MINUTES,
+
+        "generated_at": now.isoformat(),
+
+        "alert_count": len(alerts),
+
+        "alerts": alerts
+
+    }
+
+
+
+    print(json.dumps(output, indent=2))
+
+
+
+if __name__ == "__main__":
+
+    main()
+
