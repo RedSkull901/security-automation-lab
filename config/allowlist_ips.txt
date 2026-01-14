@@ -1,13 +1,2 @@
-{
-
-  "ip": "1.2.3.4",
-
-  "failed_attempts": 7,
-
-  "abuse_confidence_score": 85,
-
-  "country": "India",
-
-  "is_whitelisted": false
-
-}
+127.0.0.1
+::1
