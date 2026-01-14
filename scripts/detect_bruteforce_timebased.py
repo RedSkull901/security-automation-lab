@@ -6,8 +6,6 @@ import datetime
 
 import json
 
-import os
-
 import requests
 
 from collections import defaultdict
@@ -20,6 +18,8 @@ ALLOWLIST_FILE = "config/allowlist_ips.txt"
 
 API_KEY_FILE = "config/api_keys.env"
 
+
+
 THRESHOLD = 5
 
 WINDOW_MINUTES = 10
@@ -27,6 +27,8 @@ WINDOW_MINUTES = 10
 
 
 ABUSEIPDB_URL = "https://api.abuseipdb.com/api/v2/check"
+
+
 
 
 
@@ -50,6 +52,8 @@ def load_allowlist(path):
 
 
 
+
+
 def load_api_key(path):
 
     try:
@@ -60,13 +64,15 @@ def load_api_key(path):
 
                 if line.startswith("ABUSEIPDB_API_KEY"):
 
-                    return line.strip().split("=")[1]
+                    return line.strip().split("=", 1)[1]
 
     except FileNotFoundError:
 
         pass
 
     return None
+
+
 
 
 
@@ -88,7 +94,15 @@ def parse_log_time(line):
 
 
 
+
+
 def enrich_ip(ip, api_key):
+
+    if not api_key:
+
+        return {}
+
+
 
     headers = {
 
@@ -106,15 +120,27 @@ def enrich_ip(ip, api_key):
 
     }
 
+
+
     try:
 
-        response = requests.get(ABUSEIPDB_URL, headers=headers, params=params, timeout=10)
+        response = requests.get(
+
+            ABUSEIPDB_URL,
+
+            headers=headers,
+
+            params=params,
+
+            timeout=10
+
+        )
 
         data = response.json().get("data", {})
 
         return {
 
-            "abuse_confidence_score": data.get("abuseConfidenceScore"),
+            "abuse_confidence_score": data.get("abuseConfidenceScore", 0),
 
             "country": data.get("countryCode"),
 
@@ -126,7 +152,7 @@ def enrich_ip(ip, api_key):
 
         return {
 
-            "abuse_confidence_score": None,
+            "abuse_confidence_score": 0,
 
             "country": None,
 
@@ -136,19 +162,63 @@ def enrich_ip(ip, api_key):
 
 
 
+
+
+def calculate_risk(failed_attempts, abuse_score):
+
+    return (failed_attempts * 10) + abuse_score
+
+
+
+
+
+def map_severity(risk_score):
+
+    if risk_score >= 71:
+
+        return "high"
+
+    elif risk_score >= 31:
+
+        return "medium"
+
+    return "low"
+
+
+
+
+
+def decide_action(severity):
+
+    if severity == "high":
+
+        return "alert_and_escalate"
+
+    elif severity == "medium":
+
+        return "alert"
+
+    return "ignore"
+
+
+
+
+
 def main():
 
     now = datetime.datetime.now()
 
     window_start = now - datetime.timedelta(minutes=WINDOW_MINUTES)
 
-    failed_attempts = defaultdict(int)
-
 
 
     allowlist = load_allowlist(ALLOWLIST_FILE)
 
     api_key = load_api_key(API_KEY_FILE)
+
+
+
+    failed_attempts = defaultdict(int)
 
 
 
@@ -196,29 +266,53 @@ def main():
 
     alerts = []
 
+
+
     for ip, count in failed_attempts.items():
 
-        if count >= THRESHOLD:
+        if count < THRESHOLD:
 
-            enrichment = enrich_ip(ip, api_key) if api_key else {}
+            continue
 
-            alerts.append({
 
-                "ip": ip,
 
-                "failed_attempts": count,
+        intel = enrich_ip(ip, api_key)
 
-                "threat_intel": enrichment
+        abuse_score = intel.get("abuse_confidence_score", 0)
 
-            })
+
+
+        risk_score = calculate_risk(count, abuse_score)
+
+        severity = map_severity(risk_score)
+
+        action = decide_action(severity)
+
+
+
+        alerts.append({
+
+            "ip": ip,
+
+            "failed_attempts": count,
+
+            "abuse_confidence_score": abuse_score,
+
+            "risk_score": risk_score,
+
+            "severity": severity,
+
+            "action": action,
+
+            "threat_intel": intel
+
+        })
 
 
 
     output = {
 
         "detection": "ssh_bruteforce",
-
-        "severity": "high" if alerts else "info",
 
         "window_minutes": WINDOW_MINUTES,
 
@@ -233,6 +327,8 @@ def main():
 
 
     print(json.dumps(output, indent=2))
+
+
 
 
 
