@@ -12,6 +12,10 @@ from collections import defaultdict
 
 
 
+# ---------------- CONFIG ----------------
+
+
+
 LOG_FILE = "/var/log/auth.log"
 
 ALLOWLIST_FILE = "config/allowlist_ips.txt"
@@ -29,6 +33,8 @@ WINDOW_MINUTES = 10
 ABUSEIPDB_URL = "https://api.abuseipdb.com/api/v2/check"
 
 
+
+# ---------------- HELPERS ----------------
 
 
 
@@ -100,7 +106,15 @@ def enrich_ip(ip, api_key):
 
     if not api_key:
 
-        return {}
+        return {
+
+            "abuse_confidence_score": 0,
+
+            "country": None,
+
+            "is_whitelisted": None
+
+        }
 
 
 
@@ -161,9 +175,6 @@ def enrich_ip(ip, api_key):
         }
 
 
-
-
-
 def calculate_risk(failed_attempts, abuse_score):
 
     return (failed_attempts * 10) + abuse_score
@@ -196,9 +207,41 @@ def decide_action(severity):
 
     elif severity == "medium":
 
-        return "alert"
+        return "alert_only"
 
     return "ignore"
+
+
+
+
+
+def simulate_block(ip):
+
+    print(f"[SIMULATION] Blocking IP {ip} (no real action taken)")
+
+
+
+
+
+def respond_to_alert(alert):
+
+    ip = alert["ip"]
+
+    action = alert["action"]
+
+
+
+    if action == "alert_only":
+
+        print(f"[RESPONSE] Alert generated for {ip}")
+
+
+
+    elif action == "alert_and_escalate":
+
+        print(f"[RESPONSE] Escalation triggered for {ip}")
+
+        simulate_block(ip)
 
 
 
@@ -221,6 +264,8 @@ def main():
     failed_attempts = defaultdict(int)
 
 
+
+    # ---- LOG PARSING ----
 
     with open(LOG_FILE, "r") as log:
 
@@ -263,6 +308,7 @@ def main():
             failed_attempts[ip] += 1
 
 
+    # ---- BUILD ALERTS ----
 
     alerts = []
 
@@ -290,7 +336,7 @@ def main():
 
 
 
-        alerts.append({
+        alert = {
 
             "ip": ip,
 
@@ -306,9 +352,21 @@ def main():
 
             "threat_intel": intel
 
-        })
+        }
 
 
+
+        alerts.append(alert)
+
+    # ---- RESPOND ----
+
+    for alert in alerts:
+
+        respond_to_alert(alert)
+
+
+
+    # ---- OUTPUT ----
 
     output = {
 
@@ -325,10 +383,7 @@ def main():
     }
 
 
-
     print(json.dumps(output, indent=2))
-
-
 
 
 
