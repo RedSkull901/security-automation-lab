@@ -1,5 +1,6 @@
 # Day 12 - Real Automated Response with Rollback
 
+<img width="801" height="404" alt="image" src="https://github.com/user-attachments/assets/ae0a63fb-1a06-4a77-b228-7a6340967f2b" />
 
 
 ## Objective
