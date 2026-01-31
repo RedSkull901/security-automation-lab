@@ -8,6 +8,8 @@ import json
 
 import requests
 
+import subprocess
+
 from collections import defaultdict
 
 
@@ -27,6 +29,8 @@ API_KEY_FILE = "config/api_keys.env"
 THRESHOLD = 5
 
 WINDOW_MINUTES = 10
+
+BLOCK_DURATION_MINUTES = 30
 
 
 
@@ -203,7 +207,7 @@ def decide_action(severity):
 
     if severity == "high":
 
-        return "alert_and_escalate"
+        return "block_temp"
 
     elif severity == "medium":
 
@@ -212,18 +216,45 @@ def decide_action(severity):
     return "ignore"
 
 
+# ------------------REAL RESPONSE----------------------
+
+def block_ip_temp(ip):
+
+    print(f"[RESPONSE] Blocking IP {ip} for {BLOCK_DURATION_MINUTES} minutes")
 
 
 
-def simulate_block(ip):
+    # Block IP
 
-    print(f"[SIMULATION] Blocking IP {ip} (no real action taken)")
+    subprocess.run(
+
+        ["iptables", "-I", "INPUT", "-s", ip, "-j", "DROP"],
+
+        check=False
+
+    )
+
+
+
+    # Schedule unblock
+
+    subprocess.Popen(
+
+        f"sleep {BLOCK_DURATION_MINUTES * 60} && iptables -D INPUT -s {ip} -j DROP",
+
+        shell=True
+
+    )
+
+# def simulate_block(ip):
+
+#    print(f"[SIMULATION] Blocking IP {ip} (no real action taken)")
 
 
 
 
 
-def respond_to_alert(alert):
+def respond(alert):
 
     ip = alert["ip"]
 
@@ -233,18 +264,18 @@ def respond_to_alert(alert):
 
     if action == "alert_only":
 
-        print(f"[RESPONSE] Alert generated for {ip}")
+        print(f"[RESPONSE] Alert only for {ip}")
 
 
 
-    elif action == "alert_and_escalate":
+    elif action == "block_temp":
 
         print(f"[RESPONSE] Escalation triggered for {ip}")
 
-        simulate_block(ip)
+        block_ip_temp(ip)
 
 
-
+#----------------------MAIN---------------------------
 
 
 def main():
@@ -360,9 +391,9 @@ def main():
 
     # ---- RESPOND ----
 
-    for alert in alerts:
+#    for alert in alerts:
 
-        respond_to_alert(alert)
+        respond(alert)
 
 
 
