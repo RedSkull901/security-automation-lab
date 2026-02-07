@@ -275,6 +275,65 @@ def respond(alert):
         block_ip_temp(ip)
 
 
+def load_webhook_url(path):
+
+    try:
+
+        with open(path, "r") as f:
+
+            for line in f:
+
+                if line.startswith("WEBHOOK_URL"):
+
+                    return line.strip().split("=", 1)[1]
+
+    except FileNotFoundError:
+
+        pass
+
+    return None
+
+
+
+
+def send_webhook(alert, webhook_url):
+
+    if not webhook_url:
+
+        return
+
+
+
+    payload = {
+
+        "event": "ssh_bruteforce_detected",
+
+        "ip": alert["ip"],
+
+        "severity": alert["severity"],
+
+        "risk_score": alert["risk_score"],
+
+        "failed_attempts": alert["failed_attempts"],
+
+        "action": alert["action"]
+
+    }
+
+
+
+    try:
+
+        requests.post(webhook_url, json=payload, timeout=5)
+
+    except Exception:
+
+        pass
+
+
+
+
+
 #----------------------MAIN---------------------------
 
 
@@ -284,13 +343,11 @@ def main():
 
     window_start = now - datetime.timedelta(minutes=WINDOW_MINUTES)
 
-
+    webhook_url = load_webhook_url("config/webhook.env")
 
     allowlist = load_allowlist(ALLOWLIST_FILE)
 
     api_key = load_api_key(API_KEY_FILE)
-
-
 
     failed_attempts = defaultdict(int)
 
@@ -395,7 +452,7 @@ def main():
 
         respond(alert)
 
-
+        send_webhook(alert, webhook_url)
 
     # ---- OUTPUT ----
 
