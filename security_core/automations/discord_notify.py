@@ -1,15 +1,7 @@
 """
-security_core/automations/discord_notify.py
+security_core/automations/discord_notify.py  (updated for Day 18)
 
-Sends rich Discord embed alert cards for security events.
-
-Discord embeds are structured message blocks with titles, fields,
-colours, and timestamps — much more readable than plain text webhooks.
-
-Colour codes (Discord uses decimal integers for embed colours):
-  Red    = 15158332  → high severity / block
-  Orange = 15105570  → medium severity / alert
-  Green  = 3066993   → low / info
+Sends rich Discord embed alert cards with optional AI triage summary.
 """
 import os
 import requests
@@ -18,9 +10,9 @@ from typing import Optional
 
 
 SEVERITY_COLOURS = {
-    "high":   15158332,   # red
-    "medium": 15105570,   # orange
-    "low":    3066993,    # green
+    "high":   15158332,
+    "medium": 15105570,
+    "low":    3066993,
 }
 
 SEVERITY_EMOJI = {
@@ -37,13 +29,9 @@ ACTION_LABELS = {
 
 
 def _load_discord_url() -> Optional[str]:
-    """Read DISCORD_WEBHOOK_URL from config/webhook.env or environment."""
-    # Check env first (Docker / CI)
     url = os.getenv("DISCORD_WEBHOOK_URL")
     if url:
         return url
-
-    # Fall back to file
     try:
         with open("config/webhook.env") as f:
             for line in f:
@@ -54,74 +42,35 @@ def _load_discord_url() -> Optional[str]:
     return None
 
 
-def build_embed(alert: dict) -> dict:
-    """
-    Build a Discord embed object from an alert dict.
-
-    Discord embed structure:
-    {
-        "title":       string,
-        "description": string,
-        "color":       int,       ← decimal colour
-        "fields":      [{"name": str, "value": str, "inline": bool}],
-        "footer":      {"text": str},
-        "timestamp":   ISO8601 string
-    }
-    """
+def build_embed(alert: dict, triage_summary: Optional[str] = None) -> dict:
     severity = alert.get("severity", "low")
     action   = alert.get("action", "ignore")
     ip       = alert.get("ip", "unknown")
     emoji    = SEVERITY_EMOJI.get(severity, "⚪")
 
     fields = [
-        {
-            "name":   "IP Address",
-            "value":  f"`{ip}`",
-            "inline": True,
-        },
-        {
-            "name":   "Severity",
-            "value":  f"{emoji} {severity.upper()}",
-            "inline": True,
-        },
-        {
-            "name":   "Action taken",
-            "value":  ACTION_LABELS.get(action, action),
-            "inline": True,
-        },
-        {
-            "name":   "Failed attempts",
-            "value":  str(alert.get("failed_attempts", "?")),
-            "inline": True,
-        },
-        {
-            "name":   "Risk score",
-            "value":  str(alert.get("risk_score", "?")),
-            "inline": True,
-        },
-        {
-            "name":   "Abuse confidence",
-            "value":  f"{alert.get('abuse_confidence_score', 0)}%",
-            "inline": True,
-        },
+        {"name": "IP Address",       "value": f"`{ip}`",                                    "inline": True},
+        {"name": "Severity",         "value": f"{emoji} {severity.upper()}",                "inline": True},
+        {"name": "Action taken",     "value": ACTION_LABELS.get(action, action),            "inline": True},
+        {"name": "Failed attempts",  "value": str(alert.get("failed_attempts", "?")),       "inline": True},
+        {"name": "Risk score",       "value": str(alert.get("risk_score", "?")),            "inline": True},
+        {"name": "Abuse confidence", "value": f"{alert.get('abuse_confidence_score', 0)}%", "inline": True},
     ]
 
-    # Add country if present
     country = alert.get("country")
     if country:
-        fields.append({
-            "name":   "Country",
-            "value":  f":flag_{country.lower()}: {country}",
-            "inline": True,
-        })
+        fields.append({"name": "Country", "value": f":flag_{country.lower()}: {country}", "inline": True})
 
-    # Add AbuseIPDB report count if present
     total_reports = alert.get("total_reports")
     if total_reports:
+        fields.append({"name": "AbuseIPDB reports", "value": str(total_reports), "inline": True})
+
+    # ── AI triage summary ──
+    if triage_summary:
         fields.append({
-            "name":   "Total AbuseIPDB reports",
-            "value":  str(total_reports),
-            "inline": True,
+            "name":   "🤖 AI Triage",
+            "value":  triage_summary[:1020],   # Discord field limit is 1024 chars
+            "inline": False,
         })
 
     return {
@@ -134,38 +83,25 @@ def build_embed(alert: dict) -> dict:
     }
 
 
-def send_alert(alert: dict, webhook_url: Optional[str] = None) -> dict:
-    """
-    Send a Discord embed for a single alert.
-    Returns {"success": bool, "status_code": int|None, "error": str|None}
-    """
+def send_alert(alert: dict, webhook_url: Optional[str] = None,
+               triage_summary: Optional[str] = None) -> dict:
     url = webhook_url or _load_discord_url()
-
     if not url:
         return {"success": False, "error": "no_discord_webhook_url"}
 
     payload = {
         "username": "Security Core",
-        "embeds":   [build_embed(alert)],
+        "embeds":   [build_embed(alert, triage_summary=triage_summary)],
     }
 
     try:
         resp = requests.post(url, json=payload, timeout=5)
-        # Discord returns 204 No Content on success
-        return {
-            "success":     resp.status_code in (200, 204),
-            "status_code": resp.status_code,
-            "error":       None,
-        }
+        return {"success": resp.status_code in (200, 204), "status_code": resp.status_code}
     except Exception as exc:
         return {"success": False, "status_code": None, "error": str(exc)}
 
 
 def send_digest(stats: dict, webhook_url: Optional[str] = None) -> dict:
-    """
-    Send a daily digest summary embed.
-    Called by the scheduled playbook — not per-alert.
-    """
     url = webhook_url or _load_discord_url()
     if not url:
         return {"success": False, "error": "no_discord_webhook_url"}
@@ -178,7 +114,7 @@ def send_digest(stats: dict, webhook_url: Optional[str] = None) -> dict:
     embed = {
         "title":       "📊 Daily Security Digest",
         "description": "Summary of the last 24 hours.",
-        "color":       3447003,   # blue
+        "color":       3447003,
         "fields": [
             {"name": "Total events",    "value": str(total),   "inline": True},
             {"name": "High severity",   "value": str(high),    "inline": True},
@@ -190,9 +126,8 @@ def send_digest(stats: dict, webhook_url: Optional[str] = None) -> dict:
     }
 
     payload = {"username": "Security Core", "embeds": [embed]}
-
     try:
         resp = requests.post(url, json=payload, timeout=5)
         return {"success": resp.status_code in (200, 204), "status_code": resp.status_code}
-    except requests.RequestException as exc:
+    except Exception as exc:
         return {"success": False, "error": str(exc)}
