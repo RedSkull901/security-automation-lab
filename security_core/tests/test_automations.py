@@ -155,63 +155,67 @@ class TestCursor:
 # ══════════════════════════════════════════════════════
 
 class TestPlaybookRunOnce:
-    def test_no_events_returns_zero(self, temp_store, temp_cursor):
-        result = run_once(temp_store, dry_run=True)
+    @pytest.fixture
+    def mock_triage(self):
+        engine = MagicMock()
+        engine.is_available.return_value = False  # skip triage in tests
+        return engine
+
+    def test_no_events_returns_zero(self, temp_store, temp_cursor, mock_triage):
+        result = run_once(temp_store, mock_triage, dry_run=True)
         assert result["new_events_found"] == 0
         assert result["notified"] == []
         assert result["blocked"] == []
 
-    def test_high_severity_triggers_notify_and_block(self, temp_store, temp_cursor):
+    def test_high_severity_triggers_notify_and_block(self, temp_store, temp_cursor, mock_triage):
         temp_store.append("ssh_bruteforce", {
             "ip": "9.9.9.9", "severity": "high",
             "action": "block_temp", "failed_attempts": 10,
             "risk_score": 130, "abuse_confidence_score": 80,
         })
-        result = run_once(temp_store, dry_run=True)
+        result = run_once(temp_store, mock_triage, dry_run=True)
         assert result["new_events_found"] == 1
         assert any("9.9.9.9" in str(n) for n in result["notified"])
         assert any("9.9.9.9" in str(b) for b in result["blocked"])
 
-    def test_medium_severity_notifies_but_not_blocks(self, temp_store, temp_cursor):
+    def test_medium_severity_notifies_but_not_blocks(self, temp_store, temp_cursor, mock_triage):
         temp_store.append("ssh_bruteforce", {
             "ip": "8.8.8.8", "severity": "medium",
             "action": "alert_only", "failed_attempts": 6,
             "risk_score": 60, "abuse_confidence_score": 0,
         })
-        result = run_once(temp_store, dry_run=True)
+        result = run_once(temp_store, mock_triage, dry_run=True)
         assert any("8.8.8.8" in str(n) for n in result["notified"])
         assert not any("8.8.8.8" in str(b) for b in result["blocked"])
 
-    def test_low_severity_ignored(self, temp_store, temp_cursor):
+    def test_low_severity_ignored(self, temp_store, temp_cursor, mock_triage):
         temp_store.append("ssh_bruteforce", {
             "ip": "7.7.7.7", "severity": "low",
             "action": "ignore", "failed_attempts": 2,
             "risk_score": 20, "abuse_confidence_score": 0,
         })
-        result = run_once(temp_store, dry_run=True)
+        result = run_once(temp_store, mock_triage, dry_run=True)
         assert result["notified"] == []
         assert result["blocked"] == []
 
-    def test_cursor_advances_after_run(self, temp_store, temp_cursor):
+    def test_cursor_advances_after_run(self, temp_store, temp_cursor, mock_triage):
         temp_store.append("ssh_bruteforce", {
             "ip": "5.5.5.5", "severity": "high",
             "action": "block_temp", "failed_attempts": 8,
             "risk_score": 90, "abuse_confidence_score": 10,
         })
         before = read_cursor()
-        run_once(temp_store, dry_run=True)
+        run_once(temp_store, mock_triage, dry_run=True)
         after = read_cursor()
         assert after > before
 
-    def test_does_not_reprocess_old_events(self, temp_store, temp_cursor):
+    def test_does_not_reprocess_old_events(self, temp_store, temp_cursor, mock_triage):
         temp_store.append("ssh_bruteforce", {
             "ip": "6.6.6.6", "severity": "high",
             "action": "block_temp", "failed_attempts": 8,
             "risk_score": 90, "abuse_confidence_score": 10,
         })
-        # Run once — processes the event
-        first = run_once(temp_store, dry_run=True)
-        # Run again — cursor advanced, nothing new
-        second = run_once(temp_store, dry_run=True)
+        first = run_once(temp_store, mock_triage, dry_run=True)
+        second = run_once(temp_store, mock_triage, dry_run=True)
         assert first["new_events_found"] == 1
         assert second["new_events_found"] == 0
