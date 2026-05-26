@@ -1,0 +1,67 @@
+services:
+
+  # ── Security Core API ──────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: security-core-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Detection settings
+      SAL_LOG_FILE:       /var/log/auth.log
+      SAL_THRESHOLD:      "5"
+      SAL_WINDOW_MIN:     "10"
+      SAL_BLOCK_DURATION: "30"
+      SAL_DRY_RUN:        "true"          # flip to false when running as root
+
+      # Rate limiter
+      SAL_RL_STRATEGY:    sliding_window
+      SAL_RL_MAX_HITS:    "100"
+      SAL_RL_WINDOW_SEC:  "60"
+
+      # Paths (inside container)
+      SAL_EVENTS_DB:      /app/data/events.jsonl
+      SAL_ALLOWLIST_FILE: /app/config/allowlist_ips.txt
+      SAL_API_KEY_FILE:   /app/config/api_keys.env
+      SAL_WEBHOOK_FILE:   /app/config/webhook.env
+
+    volumes:
+      # Mount real auth.log read-only (never write to system logs from a container)
+      - /var/log/auth.log:/var/log/auth.log:ro
+
+      # Persist event store across container restarts
+      - ./data:/app/data
+
+      # Mount config dir (keep secrets out of the image)
+      - ./config:/app/config:ro
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    # Extra capability needed for iptables (only when SAL_DRY_RUN=false)
+    # cap_add:
+    #   - NET_ADMIN
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  # Not wired to the rate limiter yet — that's Phase 2.
+  # Running it now means zero friction when we swap in Redis-backed limiting.
+  redis:
+    image: redis:7-alpine
+    container_name: security-core-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+
+volumes:
+  redis_data:

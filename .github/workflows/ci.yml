@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"              # caches ~/.cache/pip between runs — faster CI
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          SAL_DRY_RUN:   "true"
+          SAL_EVENTS_DB: "/tmp/test_events.jsonl"
+        run: python -m pytest security_core/tests/ -v --tb=short
+
+      - name: Check for secrets accidentally committed
+        # Fail if anyone commits an actual API key
+        run: |
+          if grep -r "ABUSEIPDB_API_KEY=[^$]" config/ 2>/dev/null; then
+            echo "ERROR: Real API key found in config/. Remove it before pushing."
+            exit 1
+          fi
+          echo "Secret check passed."
