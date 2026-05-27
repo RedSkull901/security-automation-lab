@@ -21,7 +21,7 @@ function buildTimeline(events) {
     if (buckets[bucket]) buckets[bucket][e.severity || 'low']++
   })
   // Show every 2 hours for readability, keep all for data accuracy
-  return Object.values(buckets).reverse().filter((_, i) => i % 2 === 0)
+  return Object.values(buckets).reverse()
 }
 
 function buildTopIPs(events) {
