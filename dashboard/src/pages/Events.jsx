@@ -6,7 +6,8 @@ const FILTERS = ['all', 'high', 'medium', 'low']
 
 function formatTime(iso) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString()
+  const raw = iso.includes('+') || iso.endsWith('Z') ? iso : iso + 'Z'
+  return new Date(raw).toLocaleString()
 }
 
 function EventRow({ event, expanded, onToggle }) {

@@ -38,7 +38,8 @@ function LastDetection() {
       <span className="last-detect-value muted">none</span>
     </div>
   )
-  const ts = new Date(last.timestamp)
+  const raw = last.timestamp
+  const ts = new Date(raw.includes('+') || raw.endsWith('Z') ? raw : raw + 'Z')
   const ago = Math.floor((Date.now() - ts) / 1000)
   const agoStr = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.floor(ago/60)}m ago` : `${Math.floor(ago/3600)}h ago`
   const sev = last.severity || 'low'

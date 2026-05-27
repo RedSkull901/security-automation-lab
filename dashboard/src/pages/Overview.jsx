@@ -4,45 +4,51 @@ import { usePolling } from '../hooks/useApi'
 const COLOURS = { high: '#ff4d6a', medium: '#f0a500', low: '#30dca0' }
 
 function buildTimeline(events) {
-  const buckets = {}
   const now = Date.now()
-  // Create 24 hourly buckets
+  const buckets = {}
   for (let i = 23; i >= 0; i--) {
     const d = new Date(now - i * 3600000)
     const key = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
-    buckets[key] = { time: key, high: 0, medium: 0, low: 0 }
+    buckets[i] = { time: key, high: 0, medium: 0, low: 0 }
   }
   events.forEach(e => {
     if (!e.timestamp) return
-    const age = now - new Date(e.timestamp)
-    if (age > 86400000) return
-    const key = new Date(e.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
-    const nearest = Object.keys(buckets).reduce((a, b) =>
-      Math.abs(parseInt(b) - parseInt(key)) < Math.abs(parseInt(a) - parseInt(key)) ? b : a
-    )
-    const sev = e.severity || 'low'
-    if (buckets[nearest]) buckets[nearest][sev]++
+    const raw = e.timestamp.includes('+') || e.timestamp.endsWith('Z') ? e.timestamp : e.timestamp + 'Z'
+    const ts = new Date(raw)
+    const age = now - ts.getTime()
+    if (age < 0 || age > 86400000) return
+    const bucket = Math.min(23, Math.floor(age / 3600000))
+    if (buckets[bucket]) buckets[bucket][e.severity || 'low']++
   })
-  return Object.values(buckets).filter((_, i) => i % 2 === 0) // every 2 hours
+  // Show every 2 hours for readability, keep all for data accuracy
+  return Object.values(buckets).reverse().filter((_, i) => i % 2 === 0)
 }
 
 function buildTopIPs(events) {
-  const counts = {}
+  const map = {}
   events.forEach(e => {
     if (!e.ip) return
-    if (!counts[e.ip]) counts[e.ip] = { ip: e.ip, count: 0, risk: 0, severity: e.severity }
-    counts[e.ip].count++
-    counts[e.ip].risk = Math.max(counts[e.ip].risk, e.risk_score || 0)
+    if (!map[e.ip]) map[e.ip] = { ip: e.ip, count: 0, risk: 0, severity: e.severity, country: e.country }
+    map[e.ip].count++
+    if ((e.risk_score || 0) > map[e.ip].risk) {
+      map[e.ip].risk = e.risk_score || 0
+      map[e.ip].severity = e.severity
+      map[e.ip].country = e.country
+    }
   })
-  return Object.values(counts).sort((a, b) => b.risk - a.risk).slice(0, 8)
+  return Object.values(map).sort((a, b) => b.risk - a.risk).slice(0, 8)
+}
+
+const tooltipStyle = {
+  background: '#0d1117', border: '1px solid rgba(48,220,160,.2)',
+  borderRadius: 6, fontFamily: 'IBM Plex Mono', fontSize: 11,
 }
 
 export default function Overview() {
-  const { data: stats,  loading: sl } = usePolling('/stats', 15000)
-  const { data: evData, loading: el } = usePolling('/events?limit=200', 15000)
+  const { data: stats }  = usePolling('/stats', 15000)
+  const { data: evData } = usePolling('/events?limit=500', 15000)
 
-  if (sl) return <div className="loading">loading stats...</div>
-  if (!stats) return <div className="empty">API unreachable — is the Docker stack running?</div>
+  if (!stats) return <div className="loading">connecting to API...</div>
 
   const events   = evData?.events ?? []
   const timeline = buildTimeline(events)
@@ -55,22 +61,18 @@ export default function Overview() {
     { name: 'Low',    value: stats.low_severity    || 0 },
   ].filter(d => d.value > 0)
 
-  const tooltipStyle = {
-    background: '#0d1117', border: '1px solid rgba(48,220,160,.2)',
-    borderRadius: 6, fontFamily: 'IBM Plex Mono', fontSize: 11,
-  }
+  const hasTimeline = timeline.some(b => b.high + b.medium + b.low > 0)
 
   return (
     <>
       <p className="page-title">Overview — refreshes every 15s</p>
 
-      {/* Stat cards */}
       <div className="stats-grid">
         {[
-          { label: 'Total events',    value: stats.total_events   ?? '—', cls: 'blue'  },
-          { label: 'High severity',   value: stats.high_severity  ?? '—', cls: 'red'   },
+          { label: 'Total events',    value: stats.total_events    ?? '—', cls: 'blue'  },
+          { label: 'High severity',   value: stats.high_severity   ?? '—', cls: 'red'   },
           { label: 'Medium severity', value: stats.medium_severity ?? '—', cls: 'amber' },
-          { label: 'IPs blocked',     value: stats.blocked_ips    ?? '—', cls: 'green' },
+          { label: 'IPs blocked',     value: stats.blocked_ips     ?? '—', cls: 'green' },
         ].map(s => (
           <div className="stat-card" key={s.label}>
             <div className="stat-label">{s.label}</div>
@@ -79,7 +81,7 @@ export default function Overview() {
         ))}
       </div>
 
-      {/* Row 1: Severity pie + Rate limiter */}
+      {/* Row 1: Pie + Rate limiter */}
       <div className="two-col">
         <div className="card">
           <div className="card-title">Severity distribution</div>
@@ -108,47 +110,57 @@ export default function Overview() {
         </div>
 
         <div className="card">
-          <div className="card-title">Rate limiter</div>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontFamily:'IBM Plex Mono', fontSize:12 }}>
-            <tbody>
-              {[['Strategy', rl.strategy??'—'], ['Max hits', rl.max_hits??'—'],
-                ['Window', rl.window_sec?`${rl.window_sec}s`:'—'], ['Active keys', rl.active_keys??'—']
-              ].map(([k,v]) => (
-                <tr key={k}>
-                  <td style={{ padding:'8px 0', color:'var(--text3)', borderBottom:'1px solid var(--border)' }}>{k}</td>
-                  <td style={{ padding:'8px 0', color:'var(--green)', borderBottom:'1px solid var(--border)', textAlign:'right' }}>{v}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="card-title">Rate limiter status</div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
+            <span style={{
+              width:8, height:8, borderRadius:'50%', flexShrink:0,
+              background: rl.active_keys > 0 ? 'var(--amber)' : 'var(--green)',
+              boxShadow: rl.active_keys > 0 ? '0 0 6px var(--amber)' : '0 0 6px var(--green)',
+            }}/>
+            <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--text2)' }}>
+              {rl.strategy ?? '—'} · {rl.max_hits ?? '—'} hits / {rl.window_sec ?? '—'}s
+            </span>
+          </div>
+          <div style={{
+            background:'var(--bg3)', borderRadius:'var(--radius)',
+            padding:'10px 14px', fontFamily:'IBM Plex Mono', fontSize:12,
+          }}>
+            <span style={{ color:'var(--text3)' }}>Active tracked IPs  </span>
+            <span style={{ color: rl.active_keys > 0 ? 'var(--amber)' : 'var(--green)', float:'right' }}>
+              {rl.active_keys ?? 0}
+            </span>
+          </div>
           <div style={{ marginTop:16 }}>
             <div className="card-title">Last refreshed</div>
             <span style={{ fontFamily:'IBM Plex Mono', fontSize:11, color:'var(--text2)' }}>
-              {stats.generated_at ? new Date(stats.generated_at).toLocaleString() : '—'}
+              {stats.generated_at ? new Date(
+                stats.generated_at.includes('+') || stats.generated_at.endsWith('Z')
+                  ? stats.generated_at : stats.generated_at + 'Z'
+              ).toLocaleString() : '—'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Row 2: Timeline bar chart */}
+      {/* Row 2: Timeline */}
       <div className="card" style={{ marginBottom:12 }}>
         <div className="card-title">Alert timeline — last 24 hours</div>
-        {events.length === 0
-          ? <div className="empty">No events to chart</div>
+        {!hasTimeline
+          ? <div className="empty">No events in last 24 hours</div>
           : <ResponsiveContainer width="100%" height={160}>
               <BarChart data={timeline} margin={{ top:4, right:8, left:-20, bottom:0 }}>
                 <XAxis dataKey="time" tick={{ fontFamily:'IBM Plex Mono', fontSize:10, fill:'var(--text3)' }} />
                 <YAxis tick={{ fontFamily:'IBM Plex Mono', fontSize:10, fill:'var(--text3)' }} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="high"   stackId="a" fill="#ff4d6a" opacity={0.8} />
-                <Bar dataKey="medium" stackId="a" fill="#f0a500" opacity={0.8} />
-                <Bar dataKey="low"    stackId="a" fill="#30dca0" opacity={0.8} />
+                <Bar dataKey="high"   stackId="a" fill="#ff4d6a" opacity={0.85} name="High" />
+                <Bar dataKey="medium" stackId="a" fill="#f0a500" opacity={0.85} name="Medium" />
+                <Bar dataKey="low"    stackId="a" fill="#30dca0" opacity={0.85} name="Low" />
               </BarChart>
             </ResponsiveContainer>
         }
       </div>
 
-      {/* Row 3: Top attacking IPs */}
+      {/* Row 3: Top IPs */}
       <div className="card">
         <div className="card-title">Top attacking IPs</div>
         {topIPs.length === 0
@@ -156,8 +168,8 @@ export default function Overview() {
           : <table className="events-table">
               <thead>
                 <tr>
-                  <th>#</th><th>IP address</th><th>Detections</th>
-                  <th>Max risk score</th><th>Severity</th>
+                  <th>#</th><th>IP address</th><th>Country</th>
+                  <th>Detections</th><th>Max risk</th><th>Severity</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,9 +177,10 @@ export default function Overview() {
                   <tr key={row.ip}>
                     <td style={{ color:'var(--text3)', fontFamily:'IBM Plex Mono', fontSize:11 }}>{i+1}</td>
                     <td className="ip-cell">{row.ip}</td>
+                    <td className="score-cell">{row.country ?? '—'}</td>
                     <td className="score-cell">{row.count}</td>
                     <td className="score-cell">{row.risk}</td>
-                    <td><span className={`badge badge-${row.severity}`}>{row.severity}</span></td>
+                    <td><span className={`badge badge-${row.severity || 'low'}`}>{row.severity || 'low'}</span></td>
                   </tr>
                 ))}
               </tbody>
