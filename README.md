@@ -142,8 +142,7 @@ Each day builds on the previous one to show progression, architecture decisions,
   <img width="1278" height="800" alt="image" src="https://github.com/user-attachments/assets/ad927e34-f2a6-4e70-8cd8-4c7caf00b133" />
 
 - Block Management
-  <img width="1270" height="746" alt="image" src="https://github.com/user-attachments/assets/de650260-ece1-42ae-89ef-6380a6462979" />
-
+  <img width="1275" height="716" alt="image" src="https://github.com/user-attachments/assets/2bb690e0-30d8-48c3-9778-5de94b347cca" />
 
 ---
 
