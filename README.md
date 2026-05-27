@@ -135,11 +135,15 @@ Each day builds on the previous one to show progression, architecture decisions,
 
 # Screenshots
 
-(Add dashboard screenshots here)
-
 - Overview Dashboard
+- <img width="1166" height="916" alt="image" src="https://github.com/user-attachments/assets/86623164-c6a4-4c04-81ac-c5a3eb9612bc" />
+
 - Event Monitoring
+- <img width="1278" height="800" alt="image" src="https://github.com/user-attachments/assets/ad927e34-f2a6-4e70-8cd8-4c7caf00b133" />
+
 - Block Management
+- <img width="1270" height="746" alt="image" src="https://github.com/user-attachments/assets/de650260-ece1-42ae-89ef-6380a6462979" />
+
 
 ---
 
