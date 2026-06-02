@@ -1,164 +1,156 @@
 #!/usr/bin/env python3
 """
-scripts/simulate_attack.py
+Multi-vector attack simulator for the Security Automation Lab.
 
-Simulates SSH brute-force attacks for testing the full pipeline.
-Spreads fake log entries across the last 24 hours so the timeline chart populates.
+Writes synthetic Linux log entries for:
+  - SSH brute force
+  - sudo authentication failures
+  - port scan firewall logs
 
 Usage:
-    sudo python3 scripts/simulate_attack.py           # basic test
-    sudo python3 scripts/simulate_attack.py --full    # multi-IP simulation
-    sudo python3 scripts/simulate_attack.py --ip 1.2.3.4 --attempts 15
+    sudo python3 scripts/simulate_attack.py --full
+    sudo python3 scripts/simulate_attack.py --vector ssh
+    sudo python3 scripts/simulate_attack.py --vector sudo
+    sudo python3 scripts/simulate_attack.py --vector portscan
+    sudo python3 scripts/simulate_attack.py --ip 203.0.113.42 --full
 """
+
+from __future__ import annotations
+
 import argparse
-import json
-import os
-import subprocess
+import random
 import sys
 import time
-import random
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from pathlib import Path
 
-ATTACKERS = [
-    {"ip": "185.220.101.45", "attempts": 18, "country": "RU"},
-    {"ip": "45.33.32.156",   "attempts": 12, "country": "CN"},
-    {"ip": "103.21.244.0",   "attempts": 8,  "country": "NL"},
+AUTH_LOG = Path("/var/log/auth.log")
+UFW_LOG = Path("/var/log/ufw.log")
+
+ATTACKER_IPS = [
+    "203.0.113.42",
+    "198.51.100.17",
+    "192.0.2.99",
+    "45.33.32.156",
+    "104.21.14.88",
 ]
 
-LOG_FILE  = "/var/log/auth.log"
-USERNAMES = ["root", "admin", "ubuntu", "test", "user", "pi", "oracle", "postgres"]
+SSH_USERS = ["root", "admin", "ubuntu", "deploy", "git", "oracle", "postgres"]
+SUDO_USERS = ["www-data", "ubuntu", "deploy", "git"]
+PORTS = [22, 80, 443, 3306, 5432, 6379, 8080, 8443, 9200, 27017]
 
 
-def inject_log_lines(ip: str, attempts: int, spread_hours: int = 8) -> int:
-    """
-    Write realistic 'Failed password' lines spread across the last N hours.
-    This ensures the 24h timeline chart shows activity.
-    """
-    lines_written = 0
-    now = datetime.now()
-
-    for i in range(attempts):
-        user = USERNAMES[i % len(USERNAMES)]
-        port = 50000 + i
-        # Spread events across the last spread_hours hours
-        offset_minutes = random.randint(0, spread_hours * 60)
-        ts = now - timedelta(minutes=offset_minutes)
-        ts_str = ts.strftime("%b %d %H:%M:%S")
-        line = (f"{ts_str} security-lab sshd[{9000+i}]: "
-                f"Failed password for {user} from {ip} port {port} ssh2\n")
-        try:
-            with open(LOG_FILE, "a") as f:
-                f.write(line)
-            lines_written += 1
-        except PermissionError:
-            print("[ERROR] Need sudo: sudo python3 scripts/simulate_attack.py")
-            sys.exit(1)
-
-    return lines_written
+def _now() -> str:
+    return datetime.now().strftime("%b %d %H:%M:%S")
 
 
-def run_detector() -> dict:
-    """Run the SSH brute-force detector and return parsed output."""
-    env = os.environ.copy()
-    env["SAL_DRY_RUN"]    = "false"
-    env["SAL_THRESHOLD"]  = "3"
-    env["TRIAGE_TIMEOUT"] = "1"
+def _ensure_log(path: Path) -> None:
+    """Create log file if it does not exist. Intended for lab/test environments only."""
+    if not path.exists():
+        path.touch()
+        print(f"[sim] created missing log file: {path}")
 
+
+def _write_line(path: Path, line: str) -> None:
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "security_core.detectors.ssh_bruteforce"],
-            capture_output=True, text=True, env=env,
-            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            timeout=30
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except PermissionError:
+        print(f"[ERROR] Permission denied writing {path}. Run with sudo.", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def simulate_ssh(attempts: int = 12, attacker_ip: str | None = None) -> int:
+    _ensure_log(AUTH_LOG)
+    ip = attacker_ip or random.choice(ATTACKER_IPS)
+    user = random.choice(SSH_USERS)
+    hostname = "seclab"
+
+    print(f"[sim] ssh brute force: {attempts} attempts from {ip} as {user}")
+
+    for index in range(attempts):
+        port = random.randint(40000, 65000)
+        line = (
+            f"{_now()} {hostname} sshd[{9000 + index}]: "
+            f"Failed password for {user} from {ip} port {port} ssh2"
         )
-    except subprocess.TimeoutExpired:
-        print("  [INFO] Detector timed out (triage running) — events already stored")
-        return {"alert_count": "?", "alerts": []}
+        _write_line(AUTH_LOG, line)
+        time.sleep(0.03)
 
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print("[DETECTOR OUTPUT]", result.stdout)
-        print("[DETECTOR ERRORS]", result.stderr)
-        return {}
+    return attempts
 
 
-def print_banner(text: str):
-    print("\n" + "─" * 60)
-    print(f"  {text}")
-    print("─" * 60)
+def simulate_sudo(attempts: int = 7, user: str | None = None) -> int:
+    _ensure_log(AUTH_LOG)
+    sudo_user = user or random.choice(SUDO_USERS)
+    hostname = "seclab"
+
+    print(f"[sim] sudo brute force: {attempts} failures as {sudo_user}")
+
+    for index in range(attempts):
+        line = (
+            f"{_now()} {hostname} sudo[{8000 + index}]: "
+            f"{sudo_user} : {random.randint(1, 5)} incorrect password attempts ; "
+            f"TTY=pts/0 ; PWD=/home/{sudo_user} ; USER=root ; COMMAND=/bin/bash"
+        )
+        _write_line(AUTH_LOG, line)
+        time.sleep(0.03)
+
+    return attempts
 
 
-def main():
-    parser = argparse.ArgumentParser(description="SSH brute-force attack simulator")
-    parser.add_argument("--ip",       default=None)
-    parser.add_argument("--attempts", type=int, default=10)
-    parser.add_argument("--full",     action="store_true")
-    parser.add_argument("--hours",    type=int, default=8,
-                        help="Spread events across this many hours (default: 8)")
+def simulate_portscan(port_count: int = 15, attacker_ip: str | None = None) -> int:
+    _ensure_log(UFW_LOG)
+    ip = attacker_ip or random.choice(ATTACKER_IPS)
+    hostname = "seclab"
+    selected_ports = random.sample(PORTS * 3, min(port_count, len(PORTS * 3)))
+
+    print(f"[sim] port scan: {len(selected_ports)} ports from {ip}")
+
+    for index, destination_port in enumerate(selected_ports):
+        source_port = random.randint(40000, 65000)
+        line = (
+            f"{_now()} {hostname} kernel: [UFW BLOCK] "
+            f"IN=eth0 OUT= MAC=00:00:00:00:00:00 "
+            f"SRC={ip} DST=192.168.56.102 LEN=44 TOS=0x00 "
+            f"PREC=0x00 TTL=64 ID={7000 + index} "
+            f"PROTO=TCP SPT={source_port} DPT={destination_port} "
+            f"WINDOW=1024 RES=0x00 SYN URGP=0"
+        )
+        _write_line(UFW_LOG, line)
+        time.sleep(0.02)
+
+    return len(selected_ports)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Multi-vector attack simulator")
+    parser.add_argument("--full", action="store_true", help="Run SSH, sudo, and port scan simulations")
+    parser.add_argument("--vector", choices=["ssh", "sudo", "portscan"], help="Run one vector")
+    parser.add_argument("--ip", help="Override source IP for remote vectors")
+    parser.add_argument("--attempts", type=int, default=12, help="SSH attempt count")
+    parser.add_argument("--sudo-attempts", type=int, default=7, help="sudo failure count")
+    parser.add_argument("--ports", type=int, default=15, help="port scan destination port count")
     args = parser.parse_args()
 
-    print_banner("Security Automation Lab — Attack Simulator")
+    if not args.full and not args.vector:
+        parser.print_help()
+        return
 
-    if args.full:
-        attackers = ATTACKERS
-    elif args.ip:
-        attackers = [{"ip": args.ip, "attempts": args.attempts, "country": "??"}]
-    else:
-        attackers = [{"ip": "10.10.10.99", "attempts": args.attempts, "country": "TEST"}]
+    totals: dict[str, int] = {}
 
-    # Step 1: Inject log entries
-    print_banner("Step 1 — Injecting fake SSH failure log entries")
-    total_lines = 0
-    for attacker in attackers:
-        n = inject_log_lines(attacker["ip"], attacker["attempts"], spread_hours=args.hours)
-        total_lines += n
-        print(f"  ✓ {attacker['ip']} ({attacker['country']}) — {n} attempts spread over {args.hours}h")
-    print(f"\n  Total lines injected: {total_lines}")
-    time.sleep(0.3)
+    if args.full or args.vector == "ssh":
+        totals["ssh"] = simulate_ssh(attempts=args.attempts, attacker_ip=args.ip)
 
-    # Step 2: Run detector
-    print_banner("Step 2 — Running SSH brute-force detector")
-    output     = run_detector()
-    alert_count = output.get("alert_count", 0)
-    alerts      = output.get("alerts", [])
+    if args.full or args.vector == "sudo":
+        totals["sudo"] = simulate_sudo(attempts=args.sudo_attempts)
 
-    count_val = alert_count if alert_count != "?" else "? (timed out — check events.jsonl)"
-    print(f"  Alerts generated: {count_val}")
-    for alert in alerts:
-        print(f"  → {alert.get('ip','?'):20s} severity={str(alert.get('severity','?')).upper():8s} "
-              f"risk={alert.get('risk_score','?'):5} action={alert.get('action','?')}")
+    if args.full or args.vector == "portscan":
+        totals["portscan"] = simulate_portscan(port_count=args.ports, attacker_ip=args.ip)
 
-    # Step 3: Verify event store
-    print_banner("Step 3 — Checking event store")
-    events_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data", "events.jsonl"
-    )
-    if os.path.exists(events_path):
-        with open(events_path) as f:
-            lines = [l for l in f if l.strip()]
-        print(f"  Events in store: {len(lines)}")
-        if lines:
-            try:
-                last = json.loads(lines[-1])
-                print(f"  Latest: {last.get('ip')} — {last.get('severity')} — {last.get('timestamp','')[:19]}")
-            except Exception:
-                pass
-    else:
-        print("  [WARN] data/events.jsonl not found")
-
-    # Summary
-    print_banner("Done")
-    is_success = alert_count == "?" or (isinstance(alert_count, int) and alert_count > 0)
-    if is_success:
-        print("  ✓ Pipeline working — check your dashboard")
-        print("  → http://192.168.56.102:3000")
-        print("  → http://192.168.56.102:8000/events")
-    else:
-        print("  ✗ No alerts. Try:")
-        print("    SAL_THRESHOLD=1 python -m security_core.detectors.ssh_bruteforce")
-    print()
+    print("[sim] done")
+    for vector, count in totals.items():
+        print(f"[sim]   {vector}: {count} line(s)")
 
 
 if __name__ == "__main__":
