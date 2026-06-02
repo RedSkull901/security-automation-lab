@@ -37,7 +37,7 @@ app = FastAPI(
 # Allow the React dashboard (any localhost port) during development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

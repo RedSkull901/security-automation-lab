@@ -31,7 +31,8 @@ def _parse_log_time(line: str) -> Optional[datetime.datetime]:
     try:
         ts = " ".join(parts[0:3])
         year = datetime.datetime.now().year
-        return datetime.datetime.strptime(f"{ts} {year}", "%b %d %H:%M:%S %Y")
+        dt = datetime.datetime.strptime(f"{ts} {year}", "%b %d %H:%M:%S %Y")
+        return dt.replace(tzinfo=datetime.timezone.utc)  # ← add this line
     except ValueError:
         return None
 
@@ -68,7 +69,12 @@ def _parse_failed_attempts(
 
 
 def run_detector() -> dict:
+<<<<<<< Updated upstream
     now = datetime.datetime.now()
+=======
+    from datetime import timezone
+    now = datetime.datetime.now(timezone.utc)
+>>>>>>> Stashed changes
     window_start = now - datetime.timedelta(minutes=config.BRUTE_FORCE_WINDOW_MIN)
 
     allowlist = load_allowlist(config.ALLOWLIST_FILE)
