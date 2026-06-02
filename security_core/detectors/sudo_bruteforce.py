@@ -106,7 +106,9 @@ def detect() -> list[dict]:
         user = match.group("user").strip()
         source_ip = _extract_source_ip(line)
 
-        if source_ip in allowlist:
+        # Do not suppress local sudo failures just because localhost is allowlisted.
+        # For sudo, the username is the primary entity and source_ip is usually 127.0.0.1.
+        if source_ip in allowlist and source_ip != "127.0.0.1":
             continue
 
         failures_by_user[user].append(line.strip())
